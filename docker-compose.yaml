@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  codesnap:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AI_PROVIDER=${AI_PROVIDER:-openai}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    volumes:
+      - ./codesnap.db:/app/codesnap.db
+    restart: unless-stopped

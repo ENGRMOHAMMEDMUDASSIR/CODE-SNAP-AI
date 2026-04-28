@@ -1,0 +1,160 @@
+<!-- frontend/templates/history.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeSnap AI - Analysis History</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📜 Analysis History</h1>
+            <p>Previously analyzed repositories</p>
+            <a href="/" class="btn-primary" style="display: inline-block; margin-top: 1rem;">← New Analysis</a>
+        </header>
+        
+        <div id="history-list" class="history-container">
+            <div class="loading">Loading history...</div>
+        </div>
+    </div>
+    
+    <script>
+        async function loadHistory() {
+            try {
+                const response = await fetch('/history');
+                const result = await response.json();
+                
+                const historyDiv = document.getElementById('history-list');
+                
+                if (!result.data || result.data.length === 0) {
+                    historyDiv.innerHTML = `
+                        <div class="empty-state">
+                            <p>No analysis history found.</p>
+                            <a href="/" class="btn-primary">Analyze Your First Repository</a>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                historyDiv.innerHTML = result.data.map(repo => `
+                    <div class="history-card" data-url="${repo.repo_url}">
+                        <div class="history-header">
+                            <h3>📦 ${repo.repo_name}</h3>
+                            <span class="history-date">${new Date(repo.analyzed_at).toLocaleDateString()}</span>
+                        </div>
+                        <div class="history-tech">
+                            ${repo.tech_stack.map(tech => `<span class="tech-badge">${tech}</span>`).join('')}
+                        </div>
+                        <p class="history-description">${repo.description.substring(0, 150)}...</p>
+                        <div class="history-actions">
+                            <button class="btn-primary view-analysis" data-url="${repo.repo_url}">View Analysis</button>
+                            <button class="btn-secondary delete-history" data-url="${repo.repo_url}">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+                
+                document.querySelectorAll('.view-analysis').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const url = btn.dataset.url;
+                        localStorage.setItem('recentAnalysis', url);
+                        window.location.href = '/';
+                    });
+                });
+                
+                document.querySelectorAll('.delete-history').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const url = btn.dataset.url;
+                        if (confirm('Delete this analysis from history?')) {
+                            await fetch('/history', {
+                                method: 'DELETE',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ repo_url: url })
+                            });
+                            loadHistory();
+                        }
+                    });
+                });
+                
+            } catch (error) {
+                document.getElementById('history-list').innerHTML = `
+                    <div class="error">Failed to load history: ${error.message}</div>
+                `;
+            }
+        }
+        
+        loadHistory();
+    </script>
+    
+    <style>
+        .history-container {
+            margin-top: 2rem;
+        }
+        
+        .history-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            transition: transform 0.2s;
+        }
+        
+        .history-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        
+        .history-date {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        
+        .history-tech {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .history-description {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+        
+        .history-actions {
+            display: flex;
+            gap: 1rem;
+        }
+        
+        .btn-secondary {
+            background: #21262d;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        .btn-secondary:hover {
+            background: #30363d;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 4rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+    </style>
+</body>
+</html>
