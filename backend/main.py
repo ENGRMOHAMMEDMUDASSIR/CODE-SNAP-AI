@@ -2,13 +2,14 @@
 from fastapi.responses import HTMLResponse, JSONResponse
 import requests
 import logging
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CodeSnap AI", version="1.0.0")
 
-# HTML content with enhanced UI
+# HTML content with Mermaid.js integration
 HTML_PAGE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -16,6 +17,7 @@ HTML_PAGE = '''
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CodeSnap AI - GitHub Repository Explainer</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -31,7 +33,7 @@ HTML_PAGE = '''
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 2rem;
         }
@@ -119,14 +121,40 @@ HTML_PAGE = '''
             to { transform: rotate(360deg); }
         }
         
-        .result {
-            margin-top: 2rem;
-            animation: fadeIn 0.5s ease-in;
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid #30363d;
+        }
+        
+        .tab-btn {
+            padding: 0.75rem 1.5rem;
+            background: none;
+            border: none;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .tab-btn.active {
+            color: #c9d1d9;
+            border-bottom: 2px solid #238636;
+        }
+        
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        .tab-content.active {
+            display: block;
         }
         
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
         
         .repo-card {
@@ -198,6 +226,52 @@ HTML_PAGE = '''
             font-weight: 500;
         }
         
+        .tech-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 1rem 0;
+        }
+        
+        .tech-badge {
+            background: #238636;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+        }
+        
+        .mermaid {
+            background: #ffffff;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            text-align: center;
+        }
+        
+        .onboarding-step {
+            background: #0d1117;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border-left: 3px solid #238636;
+        }
+        
+        .step-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #58a6ff;
+        }
+        
+        .step-commands {
+            background: #010409;
+            padding: 0.75rem;
+            border-radius: 6px;
+            font-family: monospace;
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+        }
+        
         a {
             color: #58a6ff;
             text-decoration: none;
@@ -220,6 +294,7 @@ HTML_PAGE = '''
             .container { padding: 1rem; }
             .input-section { flex-direction: column; }
             .repo-stats { gap: 1rem; }
+            .tabs { flex-wrap: wrap; }
         }
     </style>
 </head>
@@ -241,12 +316,43 @@ HTML_PAGE = '''
                 <p style="margin-top: 1rem;">Analyzing repository structure...</p>
             </div>
             
-            <div id="result" class="result" style="display: none;"></div>
+            <div id="results" style="display: none;">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="overview">📋 Overview</button>
+                    <button class="tab-btn" data-tab="diagram">📊 Architecture Diagram</button>
+                    <button class="tab-btn" data-tab="onboarding">🚀 Onboarding Guide</button>
+                    <button class="tab-btn" data-tab="tech">💻 Tech Stack</button>
+                </div>
+                
+                <div id="overview" class="tab-content active"></div>
+                <div id="diagram" class="tab-content">
+                    <div class="repo-card">
+                        <h3>📐 Repository Architecture</h3>
+                        <div id="mermaid-diagram" class="mermaid"></div>
+                    </div>
+                </div>
+                <div id="onboarding" class="tab-content">
+                    <div class="repo-card">
+                        <h3>📚 Developer Onboarding Guide</h3>
+                        <div id="onboarding-content"></div>
+                    </div>
+                </div>
+                <div id="tech" class="tab-content">
+                    <div class="repo-card">
+                        <h3>💻 Technology Stack</h3>
+                        <div id="tech-content"></div>
+                    </div>
+                </div>
+            </div>
+            
             <div id="error-message" class="error" style="display: none;"></div>
         </div>
     </div>
     
     <script>
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+        let currentData = null;
+        
         document.getElementById('analyze-btn').onclick = async function() {
             const url = document.getElementById('repo-url').value.trim();
             if (!url) {
@@ -261,7 +367,7 @@ HTML_PAGE = '''
             
             showLoading(true);
             hideError();
-            hideResult();
+            document.getElementById('results').style.display = 'none';
             
             try {
                 const response = await fetch('/analyze', {
@@ -276,7 +382,16 @@ HTML_PAGE = '''
                     throw new Error(data.detail || 'Analysis failed');
                 }
                 
+                currentData = data;
                 displayResults(data);
+                document.getElementById('results').style.display = 'block';
+                
+                // Render mermaid diagram
+                if (data.architecture_diagram) {
+                    const diagramElement = document.getElementById('mermaid-diagram');
+                    diagramElement.textContent = data.architecture_diagram;
+                    mermaid.contentLoaded();
+                }
                 
             } catch (error) {
                 showError(error.message);
@@ -286,9 +401,8 @@ HTML_PAGE = '''
         };
         
         function displayResults(data) {
-            const resultDiv = document.getElementById('result');
-            
-            const statsHtml = `
+            // Overview Tab
+            const overviewHtml = `
                 <div class="repo-card">
                     <div class="repo-header">
                         <h2>📦 ${data.full_name}</h2>
@@ -342,9 +456,44 @@ HTML_PAGE = '''
                     </div>
                 </div>
             `;
+            document.getElementById('overview').innerHTML = overviewHtml;
             
-            resultDiv.innerHTML = statsHtml;
-            resultDiv.style.display = 'block';
+            // Tech Stack Tab
+            const techHtml = `
+                <div class="info-item" style="margin-bottom: 1rem;">
+                    <div class="info-label">Primary Language</div>
+                    <div class="info-value" style="font-size: 1.5rem; color: #58a6ff;">${data.language || 'Unknown'}</div>
+                </div>
+                <div class="tech-badges">
+                    ${data.tech_stack && data.tech_stack.length ? data.tech_stack.map(t => `<span class="tech-badge">${t}</span>`).join('') : '<span class="tech-badge">Analyzing...</span>'}
+                </div>
+                <div class="info-item" style="margin-top: 1rem;">
+                    <div class="info-label">Architecture Pattern</div>
+                    <div class="info-value">${data.architecture_pattern || 'Standard Application'}</div>
+                </div>
+            `;
+            document.getElementById('tech-content').innerHTML = techHtml;
+            
+            // Onboarding Guide Tab
+            let onboardingHtml = '';
+            if (data.onboarding_guide && data.onboarding_guide.length) {
+                data.onboarding_guide.forEach(step => {
+                    onboardingHtml += `
+                        <div class="onboarding-step">
+                            <div class="step-title">${step.step}. ${step.title}</div>
+                            <div>${step.description}</div>
+                            ${step.commands ? `
+                                <div class="step-commands">
+                                    ${step.commands.map(cmd => `<div>$ ${cmd}</div>`).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+            } else {
+                onboardingHtml = '<p>Generating onboarding guide...</p>';
+            }
+            document.getElementById('onboarding-content').innerHTML = onboardingHtml;
         }
         
         function formatNumber(num) {
@@ -391,9 +540,18 @@ HTML_PAGE = '''
             document.getElementById('error-message').style.display = 'none';
         }
         
-        function hideResult() {
-            document.getElementById('result').style.display = 'none';
-        }
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.dataset.tab;
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                document.getElementById(tabId).classList.add('active');
+            });
+        });
         
         // Allow Enter key to submit
         document.getElementById('repo-url').addEventListener('keypress', function(e) {
@@ -405,6 +563,139 @@ HTML_PAGE = '''
 </body>
 </html>
 '''
+
+def generate_architecture_diagram(language, repo_name):
+    """Generate Mermaid.js architecture diagram based on language"""
+    
+    if language == "JavaScript" or language == "TypeScript":
+        return """
+graph TD
+    A[Browser] --> B[React/Vue/Angular]
+    B --> C[State Management]
+    B --> D[API Client]
+    D --> E[Backend APIs]
+    C --> F[Redux/Context]
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style E fill:#bfb,stroke:#333,stroke-width:2px
+"""
+    elif language == "Python":
+        return """
+graph TD
+    A[HTTP Request] --> B[FastAPI/Django/Flask]
+    B --> C[Middleware]
+    C --> D[Business Logic]
+    D --> E[Database]
+    D --> F[External APIs]
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style E fill:#bfb,stroke:#333,stroke-width:2px
+"""
+    elif language == "Java":
+        return """
+graph TD
+    A[Client] --> B[Spring Boot]
+    B --> C[Controller]
+    C --> D[Service Layer]
+    D --> E[Repository]
+    E --> F[(Database)]
+    D --> G[External Services]
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style F fill:#bfb,stroke:#333,stroke-width:2px
+"""
+    elif language == "Go":
+        return """
+graph TD
+    A[HTTP Request] --> B[Gin/Echo]
+    B --> C[Handlers]
+    C --> D[Services]
+    D --> E[Repository]
+    E --> F[(Database)]
+    D --> G[External APIs]
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style F fill:#bfb,stroke:#333,stroke-width:2px
+"""
+    else:
+        return """
+graph TD
+    A[User] --> B[Application]
+    B --> C[Core Logic]
+    B --> D[Data Layer]
+    D --> E[(Storage)]
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style E fill:#bfb,stroke:#333,stroke-width:2px
+"""
+
+def generate_onboarding_guide(language, repo_name):
+    """Generate onboarding guide based on language"""
+    
+    guides = {
+        "JavaScript": [
+            {"step": 1, "title": "Clone the Repository", "description": "Get the code on your local machine", "commands": [f"git clone https://github.com/.../{repo_name}.git", f"cd {repo_name}"]},
+            {"step": 2, "title": "Install Dependencies", "description": "Install Node.js packages", "commands": ["npm install", "yarn install"]},
+            {"step": 3, "title": "Set Up Environment", "description": "Configure environment variables", "commands": ["cp .env.example .env", "Edit .env with your settings"]},
+            {"step": 4, "title": "Run Development Server", "description": "Start the app locally", "commands": ["npm start", "npm run dev"]},
+            {"step": 5, "title": "Run Tests", "description": "Verify everything works", "commands": ["npm test"]}
+        ],
+        "Python": [
+            {"step": 1, "title": "Clone the Repository", "description": "Get the code on your local machine", "commands": [f"git clone https://github.com/.../{repo_name}.git", f"cd {repo_name}"]},
+            {"step": 2, "title": "Create Virtual Environment", "description": "Isolate dependencies", "commands": ["python -m venv venv", "source venv/bin/activate  # On Windows: venv\\Scripts\\activate"]},
+            {"step": 3, "title": "Install Dependencies", "description": "Install Python packages", "commands": ["pip install -r requirements.txt"]},
+            {"step": 4, "title": "Set Up Environment", "description": "Configure environment variables", "commands": ["cp .env.example .env", "Edit .env with your settings"]},
+            {"step": 5, "title": "Run the Application", "description": "Start the app", "commands": ["python main.py", "flask run", "uvicorn main:app --reload"]},
+            {"step": 6, "title": "Run Tests", "description": "Verify everything works", "commands": ["pytest", "python -m unittest"]}
+        ],
+        "Java": [
+            {"step": 1, "title": "Clone the Repository", "description": "Get the code on your local machine", "commands": [f"git clone https://github.com/.../{repo_name}.git", f"cd {repo_name}"]},
+            {"step": 2, "title": "Build the Project", "description": "Compile using Maven/Gradle", "commands": ["./mvnw clean install", "./gradlew build"]},
+            {"step": 3, "title": "Run the Application", "description": "Start the Spring Boot app", "commands": ["./mvnw spring-boot:run", "./gradlew bootRun"]},
+            {"step": 4, "title": "Run Tests", "description": "Verify everything works", "commands": ["./mvnw test", "./gradlew test"]}
+        ],
+        "Go": [
+            {"step": 1, "title": "Clone the Repository", "description": "Get the code on your local machine", "commands": [f"git clone https://github.com/.../{repo_name}.git", f"cd {repo_name}"]},
+            {"step": 2, "title": "Download Dependencies", "description": "Get Go modules", "commands": ["go mod download"]},
+            {"step": 3, "title": "Build the Application", "description": "Compile the binary", "commands": ["go build -o app ."]},
+            {"step": 4, "title": "Run the Application", "description": "Start the server", "commands": ["./app", "go run main.go"]},
+            {"step": 5, "title": "Run Tests", "description": "Verify everything works", "commands": ["go test ./..."]}
+        ]
+    }
+    
+    default_guide = [
+        {"step": 1, "title": "Clone the Repository", "description": "Get the code on your local machine", "commands": [f"git clone https://github.com/.../{repo_name}.git", f"cd {repo_name}"]},
+        {"step": 2, "title": "Check Documentation", "description": "Read the README for setup instructions", "commands": ["cat README.md", "Open README.md in your editor"]},
+        {"step": 3, "title": "Install Dependencies", "description": "Install required packages based on the tech stack", "commands": ["Check package.json, requirements.txt, or go.mod"]},
+        {"step": 4, "title": "Run the Application", "description": "Start the app following the README instructions", "commands": ["Follow the README for run commands"]},
+        {"step": 5, "title": "Run Tests", "description": "Ensure everything works correctly", "commands": ["Check README for test commands"]}
+    ]
+    
+    return guides.get(language, default_guide)
+
+def detect_tech_stack(language):
+    """Detect additional technologies based on primary language"""
+    tech_stack = [language]
+    
+    if language == "JavaScript" or language == "TypeScript":
+        tech_stack.append("Node.js")
+        tech_stack.append("npm/yarn")
+        tech_stack.append("Webpack/Babel")
+    elif language == "Python":
+        tech_stack.append("pip")
+        tech_stack.append("Virtual Environment")
+    elif language == "Java":
+        tech_stack.append("JVM")
+        tech_stack.append("Maven/Gradle")
+    elif language == "Go":
+        tech_stack.append("Go Modules")
+    
+    return tech_stack
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -442,6 +733,29 @@ async def analyze_repo(repo_req: dict):
         response.raise_for_status()
         repo_data = response.json()
         
+        language = repo_data.get("language") or "Unknown"
+        
+        # Generate architecture diagram based on language
+        architecture_diagram = generate_architecture_diagram(language, repo)
+        
+        # Generate onboarding guide
+        onboarding_guide = generate_onboarding_guide(language, repo)
+        
+        # Detect tech stack
+        tech_stack = detect_tech_stack(language)
+        
+        # Determine architecture pattern
+        if "JavaScript" in language or "TypeScript" in language:
+            architecture_pattern = "Frontend/Full-Stack Application"
+        elif "Python" in language:
+            architecture_pattern = "Backend API / Web Application"
+        elif "Java" in language:
+            architecture_pattern = "Enterprise Java Application"
+        elif "Go" in language:
+            architecture_pattern = "Microservices / API Gateway"
+        else:
+            architecture_pattern = "Standard Application Architecture"
+        
         # Extract detailed information
         result = {
             "repo_name": repo,
@@ -451,12 +765,16 @@ async def analyze_repo(repo_req: dict):
             "stars": repo_data.get("stargazers_count", 0),
             "forks": repo_data.get("forks_count", 0),
             "open_issues": repo_data.get("open_issues_count", 0),
-            "language": repo_data.get("language") or "Unknown",
+            "language": language,
             "license": repo_data.get("license", {}).get("name") if repo_data.get("license") else "No license",
             "created_at": repo_data.get("created_at", "Unknown"),
             "updated_at": repo_data.get("updated_at", "Unknown"),
             "homepage": repo_data.get("homepage") or "No homepage",
             "url": repo_url,
+            "architecture_diagram": architecture_diagram,
+            "onboarding_guide": onboarding_guide,
+            "tech_stack": tech_stack,
+            "architecture_pattern": architecture_pattern,
             "status": "success"
         }
         
