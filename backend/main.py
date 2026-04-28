@@ -9,10 +9,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CodeSnap AI", version="1.0.0")
 
-class RepoRequest(BaseModel):
-    repo_url: str
-
-# HTML content
+# HTML content (same as before)
 HTML_PAGE = '''
 <!DOCTYPE html>
 <html>
@@ -67,9 +64,11 @@ async def root():
     return HTMLResponse(content=HTML_PAGE)
 
 @app.post("/analyze")
-async def analyze_repo(repo_req: RepoRequest):
+async def analyze_repo(repo_req: dict):
     try:
-        repo_url = repo_req.repo_url
+        repo_url = repo_req.get('repo_url')
+        if not repo_url:
+            raise HTTPException(status_code=400, detail="repo_url required")
         
         # Extract owner and repo from URL
         parts = repo_url.rstrip('/').split('/')
