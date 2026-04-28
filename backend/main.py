@@ -1,7 +1,8 @@
-﻿# backend/main.py - Complete version with all 5 features
-from fastapi import FastAPI, HTTPException, Depends, status
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+﻿# backend/main.py - Complete with all 5 features
+from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 import logging
@@ -10,15 +11,29 @@ import json
 from datetime import datetime
 
 from backend.database import Database
-from backend.auth import get_password_hash, verify_password, create_access_token, get_current_user
+from backend.auth import get_password_hash, verify_password, create_access_token, get_current_user, get_github_login_url, exchange_github_code
 from backend.comparator import compare_repositories
 from backend.pdf_export import generate_pdf_report
 from backend.ai_explainer import AIExplainer
+from backend.rate_limiter import setup_rate_limiting, check_user_rate_limit, check_ip_rate_limit
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="CodeSnap AI", version="2.0.0")
+app = FastAPI(title="CodeSnap AI Pro", version="3.0.0")
+
+# Setup CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Setup rate limiting
+limiter = setup_rate_limiting(app)
+
 security = HTTPBearer()
 db = Database()
 ai_explainer = AIExplainer()
@@ -41,7 +56,8 @@ class CompareRequest(BaseModel):
 # ============ AUTHENTICATION ENDPOINTS ============
 
 @app.post("/register")
-async def register(user: UserCreate):
+@limiter.limit("30/minute")
+async def register(request: Request, user: UserCreate):
     password_hash = get_password_hash(user.password)
     success = db.create_user(user.username, password_hash)
     if not success:
@@ -49,21 +65,38 @@ async def register(user: UserCreate):
     return {"message": "User created successfully"}
 
 @app.post("/login")
-async def login(user: UserLogin):
+@limiter.limit("30/minute")
+async def login(request: Request, user: UserLogin):
     db_user = db.get_user(user.username)
     if not db_user or not verify_password(user.password, db_user['password_hash']):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     token = create_access_token({"sub": user.username})
-    return {"access_token": token, "token_type": "bearer"}
+    return {"access_token": token, "token_type": "bearer", "username": user.username}
 
-# ============ MAIN ANALYSIS ENDPOINT (WITH CACHING) ============
+@app.get("/auth/github")
+async def github_login():
+    """Redirect to GitHub OAuth login page"""
+    return RedirectResponse(url=get_github_login_url())
+
+@app.get("/auth/github/callback")
+async def github_callback(code: str):
+    """Handle GitHub OAuth callback"""
+    result = await exchange_github_code(code)
+    return JSONResponse(content=result)
+
+# ============ MAIN ANALYSIS ENDPOINT ============
 
 @app.post("/analyze")
-async def analyze_repo(repo_req: RepoRequest, token: HTTPAuthorizationCredentials = Depends(security)):
+@limiter.limit("10/minute")  # Stricter limit for analysis
+async def analyze_repo(request: Request, repo_req: RepoRequest, token: HTTPAuthorizationCredentials = Depends(security)):
     try:
-        repo_url = repo_req.repo_url
         user = await get_current_user(token)
+        
+        # Check per-user rate limit
+        check_user_rate_limit(user['id'], "analyze")
+        
+        repo_url = repo_req.repo_url
         
         # Check cache first
         cached = db.get_cached(repo_url)
@@ -81,7 +114,7 @@ async def analyze_repo(repo_req: RepoRequest, token: HTTPAuthorizationCredential
         
         # Fetch from GitHub API
         api_url = f"https://api.github.com/repos/{owner}/{repo}"
-        headers = {'User-Agent': 'CodeSnap-AI-App'}
+        headers = {'User-Agent': 'CodeSnap-AI-Pro'}
         github_token = os.getenv("GITHUB_TOKEN")
         if github_token:
             headers['Authorization'] = f'token {github_token}'
@@ -95,6 +128,15 @@ async def analyze_repo(repo_req: RepoRequest, token: HTTPAuthorizationCredential
         repo_data = response.json()
         
         language = repo_data.get("language") or "Unknown"
+        
+        # Get AI insights
+        ai_insights = ai_explainer.analyze_repository_with_ai({
+            "full_name": repo_data.get("full_name"),
+            "description": repo_data.get("description"),
+            "language": language,
+            "stars": repo_data.get("stargazers_count", 0),
+            "forks": repo_data.get("forks_count", 0)
+        })
         
         # Generate analysis result
         result = {
@@ -111,9 +153,11 @@ async def analyze_repo(repo_req: RepoRequest, token: HTTPAuthorizationCredential
             "updated_at": repo_data.get("updated_at", "Unknown"),
             "homepage": repo_data.get("homepage") or "No homepage",
             "url": repo_url,
-            "architecture_pattern": "Standard Application",
+            "architecture_pattern": ai_insights.get("architecture", "Standard Application"),
             "tech_stack": [language],
-            "analyzed_at": datetime.now().isoformat()
+            "ai_insights": ai_insights,
+            "analyzed_at": datetime.now().isoformat(),
+            "ai_provider": ai_insights.get("provider", "mock")
         }
         
         # Save to cache
@@ -133,8 +177,10 @@ async def analyze_repo(repo_req: RepoRequest, token: HTTPAuthorizationCredential
 # ============ COMPARE REPOSITORIES ENDPOINT ============
 
 @app.post("/compare")
-async def compare_repos(compare_req: CompareRequest, token: HTTPAuthorizationCredentials = Depends(security)):
+@limiter.limit("10/minute")
+async def compare_repos(request: Request, compare_req: CompareRequest, token: HTTPAuthorizationCredentials = Depends(security)):
     user = await get_current_user(token)
+    check_user_rate_limit(user['id'], "compare")
     
     repos_data = []
     for repo_url in compare_req.repos:
@@ -142,11 +188,10 @@ async def compare_repos(compare_req: CompareRequest, token: HTTPAuthorizationCre
         if cached:
             repos_data.append(cached)
         else:
-            # Fetch from GitHub API (simplified)
             parts = repo_url.rstrip('/').split('/')
             owner, repo = parts[-2], parts[-1]
             api_url = f"https://api.github.com/repos/{owner}/{repo}"
-            headers = {'User-Agent': 'CodeSnap-AI-App'}
+            headers = {'User-Agent': 'CodeSnap-AI-Pro'}
             github_token = os.getenv("GITHUB_TOKEN")
             if github_token:
                 headers['Authorization'] = f'token {github_token}'
@@ -168,7 +213,8 @@ async def compare_repos(compare_req: CompareRequest, token: HTTPAuthorizationCre
 # ============ PDF EXPORT ENDPOINT ============
 
 @app.post("/export-pdf")
-async def export_pdf(repo_req: RepoRequest, token: HTTPAuthorizationCredentials = Depends(security)):
+@limiter.limit("5/minute")
+async def export_pdf(request: Request, repo_req: RepoRequest, token: HTTPAuthorizationCredentials = Depends(security)):
     await get_current_user(token)
     
     repo_url = repo_req.repo_url
@@ -188,7 +234,8 @@ async def export_pdf(repo_req: RepoRequest, token: HTTPAuthorizationCredentials 
 # ============ AI EXPLANATION ENDPOINT ============
 
 @app.post("/ai-explain")
-async def ai_explain(repo_req: RepoRequest, token: HTTPAuthorizationCredentials = Depends(security)):
+@limiter.limit("10/minute")
+async def ai_explain(request: Request, repo_req: RepoRequest, token: HTTPAuthorizationCredentials = Depends(security)):
     await get_current_user(token)
     
     repo_url = repo_req.repo_url
@@ -203,7 +250,8 @@ async def ai_explain(repo_req: RepoRequest, token: HTTPAuthorizationCredentials 
 # ============ HISTORY ENDPOINT ============
 
 @app.get("/history")
-async def get_history(token: HTTPAuthorizationCredentials = Depends(security)):
+@limiter.limit("30/minute")
+async def get_history(request: Request, token: HTTPAuthorizationCredentials = Depends(security)):
     user = await get_current_user(token)
     history = db.get_history(user['id'])
     return JSONResponse(content=history)
@@ -212,9 +260,9 @@ async def get_history(token: HTTPAuthorizationCredentials = Depends(security)):
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": "2.0.0", "features": ["caching", "auth", "compare", "pdf", "ai"]}
+    return {"status": "healthy", "version": "3.0.0", "features": ["caching", "auth", "compare", "pdf", "ai", "rate_limiting", "social_login", "docker"]}
 
-# ============ HTML FRONTEND ============
+# ============ HTML FRONTEND (Same as before with social login button) ============
 
 HTML_PAGE = '''
 <!DOCTYPE html>
@@ -232,6 +280,8 @@ HTML_PAGE = '''
         textarea { width: 500px; }
         .btn { background: #238636; padding: 10px 20px; border: none; border-radius: 6px; color: white; cursor: pointer; margin: 5px; font-weight: 600; }
         .btn:hover { background: #2ea043; transform: translateY(-1px); }
+        .btn-github { background: #333; }
+        .btn-github:hover { background: #444; }
         pre { background: #010409; padding: 15px; border-radius: 8px; overflow-x: auto; margin-top: 15px; }
         .success { color: #2ea043; }
         .error { color: #f85149; }
@@ -240,7 +290,7 @@ HTML_PAGE = '''
 <body>
     <div class="container">
         <h1>📸 CodeSnap AI Pro</h1>
-        <p>Advanced GitHub Repository Analysis Platform with Caching, Auth, Compare, PDF, and AI Features</p>
+        <p>Advanced GitHub Repository Analysis Platform with AI, Caching, Auth, PDF, Compare, Rate Limiting & Docker</p>
         
         <!-- Authentication Section -->
         <div class="feature-box">
@@ -249,6 +299,7 @@ HTML_PAGE = '''
             <input type="password" id="password" placeholder="Password">
             <button class="btn" onclick="register()">Register</button>
             <button class="btn" onclick="login()">Login</button>
+            <button class="btn btn-github" onclick="githubLogin()">🔗 Login with GitHub</button>
             <div id="auth-status"></div>
         </div>
         
@@ -307,10 +358,14 @@ HTML_PAGE = '''
             if (data.access_token) {
                 localStorage.setItem('token', data.access_token);
                 authToken = data.access_token;
-                document.getElementById('auth-status').innerHTML = '<div class="success">✅ Logged in successfully!</div>';
+                document.getElementById('auth-status').innerHTML = '<div class="success">✅ Logged in as ' + data.username + '!</div>';
             } else {
                 document.getElementById('auth-status').innerHTML = '<div class="error">❌ Login failed</div>';
             }
+        }
+        
+        function githubLogin() {
+            window.location.href = '/auth/github';
         }
         
         async function analyze() {
@@ -382,6 +437,11 @@ HTML_PAGE = '''
             });
             const data = await res.json();
             document.getElementById('history-result').innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
+        
+        // Check for token in URL (OAuth callback)
+        if (window.location.hash) {
+            // Handle OAuth callback if needed
         }
     </script>
 </body>

@@ -6,9 +6,11 @@ import os
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.database import Database
+import requests
+import secrets
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-for-production")
+SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
@@ -51,3 +53,52 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail="User not found",
         )
     return dict(user)
+
+# ============ SOCIAL LOGIN (GitHub OAuth) ============
+
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
+
+def get_github_login_url():
+    return f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope=user:email"
+
+async def exchange_github_code(code: str):
+    """Exchange GitHub code for access token and user info"""
+    try:
+        # Get access token
+        response = requests.post(
+            "https://github.com/login/oauth/access_token",
+            json={
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": GITHUB_CLIENT_SECRET,
+                "code": code
+            },
+            headers={"Accept": "application/json"}
+        )
+        data = response.json()
+        access_token = data.get("access_token")
+        
+        if not access_token:
+            raise HTTPException(status_code=400, detail="Failed to get access token")
+        
+        # Get user info from GitHub
+        user_response = requests.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        user_data = user_response.json()
+        
+        github_username = user_data.get("login")
+        
+        # Check if user exists, if not create
+        existing_user = db.get_user(github_username)
+        if not existing_user:
+            db.create_user(github_username, "oauth_user")
+        
+        # Create JWT token
+        token = create_access_token({"sub": github_username})
+        
+        return {"access_token": token, "token_type": "bearer", "username": github_username}
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"OAuth failed: {str(e)}")

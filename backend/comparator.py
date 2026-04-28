@@ -38,4 +38,9 @@ def compare_repositories(repos_data: list):
         "avg_forks": round(avg_forks, 1)
     }
     
+    # Add recommendation
+    if len(repos_data) >= 2:
+        best_quality = max(repos_data, key=lambda x: x.get('stars', 0) / (x.get('open_issues', 1) + 1))
+        comparison["insights"].append(f"📊 {best_quality['full_name']} has the best star-to-issue ratio")
+    
     return comparison

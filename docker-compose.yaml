@@ -1,15 +1,30 @@
 version: '3.8'
 
 services:
-  codesnap:
+  app:
     build: .
     ports:
       - "8000:8000"
     environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - AI_PROVIDER=${AI_PROVIDER:-openai}
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - SECRET_KEY=${SECRET_KEY}
+      - REDIS_URL=redis://redis:6379
+      - RATE_LIMIT_REQUESTS=50
+      - RATE_LIMIT_PERIOD=60
+    depends_on:
+      - redis
     volumes:
-      - ./codesnap.db:/app/codesnap.db
+      - ./data:/app/data
     restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:

@@ -1,1 +1,27 @@
-.vercel
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+env/
+
+# Database
+*.db
+*.sqlite
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+*.log
+data/
+
+# OS
+.DS_Store
+Thumbs.db

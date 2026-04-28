@@ -7,100 +7,112 @@ logger = logging.getLogger(__name__)
 
 class AIExplainer:
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-        self.provider = "openai" if os.getenv("OPENAI_API_KEY") else "anthropic" if os.getenv("ANTHROPIC_API_KEY") else "mock"
-    
-    def explain_code(self, code_snippet: str, language: str) -> dict:
-        """Generate AI explanation of code"""
+        self.openai_key = os.getenv("OPENAI_API_KEY")
+        self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        self.provider = "openai" if self.openai_key else "anthropic" if self.anthropic_key else "mock"
         
-        if self.provider == "mock":
-            return self._mock_explanation(language)
-        elif self.provider == "openai":
-            return self._openai_explanation(code_snippet, language)
+        if self.openai_key:
+            try:
+                import openai
+                openai.api_key = self.openai_key
+                logger.info("OpenAI initialized")
+            except:
+                pass
+        
+        logger.info(f"AI Provider: {self.provider}")
+    
+    def analyze_repository_with_ai(self, repo_data: dict) -> dict:
+        """Use AI to analyze repository and provide insights"""
+        
+        prompt = f"""
+        Analyze this GitHub repository and provide insights as JSON:
+        
+        Repository: {repo_data.get('full_name')}
+        Description: {repo_data.get('description', 'No description')}
+        Language: {repo_data.get('language', 'Unknown')}
+        Stars: {repo_data.get('stars', 0)}
+        Forks: {repo_data.get('forks', 0)}
+        
+        Return JSON with these exact fields:
+        - architecture: description of the architecture pattern
+        - onboarding_steps: list of 5 steps to onboard a new developer
+        - key_files: list of 5 important files to understand
+        - improvements: list of 3 potential improvements
+        - complexity: rating from 1-10
+        """
+        
+        if self.provider == "openai":
+            return self._openai_analysis(prompt)
+        elif self.provider == "anthropic":
+            return self._anthropic_analysis(prompt)
         else:
-            return self._anthropic_explanation(code_snippet, language)
+            return self._mock_analysis(repo_data)
     
-    def _mock_explanation(self, language: str) -> dict:
-        return {
-            "summary": f"This appears to be a {language} code snippet. It likely implements core functionality.",
-            "key_functions": ["main()", "initialize()", "process_data()"],
-            "complexity": "Medium",
-            "suggestions": [
-                "Add error handling for edge cases",
-                "Consider adding unit tests",
-                "Document complex logic with comments"
-            ]
-        }
-    
-    def _openai_explanation(self, code_snippet: str, language: str) -> dict:
+    def _openai_analysis(self, prompt: str) -> dict:
         try:
             import openai
-            openai.api_key = self.api_key
             
             response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a code analyzer. Analyze the code and return JSON with summary, key_functions, complexity, and suggestions."},
-                    {"role": "user", "content": f"Analyze this {language} code:\n\n{code_snippet[:2000]}"}
+                    {"role": "system", "content": "You are a senior software architect. Always return valid JSON."},
+                    {"role": "user", "content": prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,
+                response_format={"type": "json_object"}
             )
             
-            result = json.loads(response.choices[0].message.content)
-            return result
+            content = response.choices[0].message.content
+            return json.loads(content)
+                
         except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
-            return self._mock_explanation(language)
+            logger.error(f"OpenAI error: {e}")
+            return self._mock_analysis({})
     
-    def _anthropic_explanation(self, code_snippet: str, language: str) -> dict:
+    def _anthropic_analysis(self, prompt: str) -> dict:
         try:
             import anthropic
-            client = anthropic.Anthropic(api_key=self.api_key)
+            client = anthropic.Anthropic(api_key=self.anthropic_key)
             
             response = client.messages.create(
                 model="claude-3-sonnet-20240229",
                 max_tokens=1000,
-                messages=[
-                    {"role": "user", "content": f"Analyze this {language} code and return JSON with summary, key_functions, complexity, and suggestions:\n\n{code_snippet[:2000]}"}
-                ]
+                messages=[{"role": "user", "content": prompt}]
             )
             
-            return {
-                "summary": "AI-generated analysis from Claude",
-                "key_functions": ["detected_functions"],
-                "complexity": "Medium",
-                "suggestions": ["Improvement suggestions from AI"]
-            }
+            return {"analysis": response.content[0].text, "provider": "anthropic"}
+            
         except Exception as e:
-            logger.error(f"Anthropic API error: {e}")
-            return self._mock_explanation(language)
+            logger.error(f"Anthropic error: {e}")
+            return self._mock_analysis({})
+    
+    def _mock_analysis(self, repo_data: dict) -> dict:
+        language = repo_data.get('language', 'Unknown')
+        return {
+            "architecture": f"Standard {language} application architecture with modular components",
+            "onboarding_steps": [
+                "Clone the repository using git clone",
+                "Install dependencies (npm install / pip install -r requirements.txt)",
+                "Set up environment variables (.env file)",
+                "Configure database (if applicable)",
+                "Run the application (npm start / python main.py)"
+            ],
+            "key_files": [
+                "README.md - Project documentation",
+                f"main.{'js' if language in ['JavaScript', 'TypeScript'] else 'py'} - Entry point",
+                "package.json / requirements.txt - Dependencies",
+                ".env.example - Environment variables template",
+                "docker-compose.yml - Container configuration"
+            ],
+            "improvements": [
+                "Add more comprehensive unit tests",
+                "Improve inline code documentation",
+                "Set up CI/CD pipeline for automated testing"
+            ],
+            "complexity": "5",
+            "provider": "mock"
+        }
     
     def generate_onboarding(self, repo_data: dict) -> dict:
         """Generate AI-powered onboarding guide"""
-        
-        tech_stack = repo_data.get('tech_stack', [])
-        language = repo_data.get('language', 'Unknown')
-        
-        if self.provider == "mock":
-            return {
-                "quick_start": f"To get started with this {language} project, clone the repository and install dependencies.",
-                "best_practices": [
-                    "Follow the project's coding standards",
-                    "Write tests for new features",
-                    "Update documentation as you go"
-                ],
-                "common_issues": [
-                    "Missing environment variables",
-                    "Dependency version conflicts",
-                    "Database connection issues"
-                ]
-            }
-        else:
-            return self._ai_onboarding(tech_stack, language)
-    
-    def _ai_onboarding(self, tech_stack: list, language: str) -> dict:
-        return {
-            "quick_start": f"Quick start guide for {language} project...",
-            "best_practices": ["Best practices would appear here"],
-            "common_issues": ["Common issues would appear here"]
-        }
+        return self.analyze_repository_with_ai(repo_data)
