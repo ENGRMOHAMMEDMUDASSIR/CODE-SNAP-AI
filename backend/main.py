@@ -2,6 +2,7 @@
 from fastapi.responses import HTMLResponse, JSONResponse
 import requests
 import logging
+import os
 import re
 
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +127,7 @@ HTML_PAGE = '''
             gap: 0.5rem;
             margin-bottom: 1.5rem;
             border-bottom: 1px solid #30363d;
+            flex-wrap: wrap;
         }
         
         .tab-btn {
@@ -247,6 +249,7 @@ HTML_PAGE = '''
             border-radius: 8px;
             margin: 1rem 0;
             text-align: center;
+            overflow-x: auto;
         }
         
         .onboarding-step {
@@ -294,7 +297,6 @@ HTML_PAGE = '''
             .container { padding: 1rem; }
             .input-section { flex-direction: column; }
             .repo-stats { gap: 1rem; }
-            .tabs { flex-wrap: wrap; }
         }
     </style>
 </head>
@@ -647,7 +649,7 @@ def generate_onboarding_guide(language, repo_name):
         ],
         "Python": [
             {"step": 1, "title": "Clone the Repository", "description": "Get the code on your local machine", "commands": [f"git clone https://github.com/.../{repo_name}.git", f"cd {repo_name}"]},
-            {"step": 2, "title": "Create Virtual Environment", "description": "Isolate dependencies", "commands": ["python -m venv venv", "source venv/bin/activate  # On Windows: venv\\Scripts\\activate"]},
+            {"step": 2, "title": "Create Virtual Environment", "description": "Isolate dependencies", "commands": ["python -m venv venv", "source venv/bin/activate  # On Windows: venv\\\\Scripts\\\\activate"]},
             {"step": 3, "title": "Install Dependencies", "description": "Install Python packages", "commands": ["pip install -r requirements.txt"]},
             {"step": 4, "title": "Set Up Environment", "description": "Configure environment variables", "commands": ["cp .env.example .env", "Edit .env with your settings"]},
             {"step": 5, "title": "Run the Application", "description": "Start the app", "commands": ["python main.py", "flask run", "uvicorn main:app --reload"]},
@@ -716,19 +718,32 @@ async def analyze_repo(repo_req: dict):
         owner = parts[-2]
         repo = parts[-1]
         
-        # Fetch repo info from GitHub API
+        # Fetch repo info from GitHub API with authentication
         api_url = f"https://api.github.com/repos/{owner}/{repo}"
         headers = {
             'Accept': 'application/vnd.github.v3+json',
             'User-Agent': 'CodeSnap-AI-App'
         }
+        
+        # Add GitHub token if available (increases rate limit to 5000/hour)
+        github_token = os.getenv("GITHUB_TOKEN")
+        if github_token:
+            headers['Authorization'] = f'token {github_token}'
+            logger.info("Using GitHub token for authentication")
+        else:
+            logger.info("No GitHub token found. Rate limit: 60 requests/hour. Add GITHUB_TOKEN for 5000/hour.")
+        
         response = requests.get(api_url, headers=headers)
         
         if response.status_code == 404:
             raise HTTPException(status_code=404, detail="Repository not found")
         
         if response.status_code == 403:
-            raise HTTPException(status_code=403, detail="API rate limit exceeded. Please try again later.")
+            error_msg = "API rate limit exceeded. "
+            if not github_token:
+                error_msg += "Add a GitHub token (GITHUB_TOKEN) in Render environment variables for 5000 requests/hour. "
+            error_msg += "Please try again later."
+            raise HTTPException(status_code=403, detail=error_msg)
         
         response.raise_for_status()
         repo_data = response.json()
