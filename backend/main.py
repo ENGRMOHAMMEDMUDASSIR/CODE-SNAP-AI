@@ -1,6 +1,5 @@
 ﻿from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
 import requests
 import logging
 
@@ -9,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CodeSnap AI", version="1.0.0")
 
-# HTML content (same as before)
 HTML_PAGE = '''
 <!DOCTYPE html>
 <html>
@@ -36,10 +34,8 @@ HTML_PAGE = '''
         document.getElementById('analyze-btn').onclick = async function() {
             const url = document.getElementById('repo-url').value;
             if (!url) { alert('Please enter a GitHub URL'); return; }
-            
             document.getElementById('loading').style.display = 'block';
             document.getElementById('result').innerHTML = '';
-            
             try {
                 const res = await fetch('/analyze', {
                     method: 'POST',
@@ -70,12 +66,10 @@ async def analyze_repo(repo_req: dict):
         if not repo_url:
             raise HTTPException(status_code=400, detail="repo_url required")
         
-        # Extract owner and repo from URL
         parts = repo_url.rstrip('/').split('/')
         owner = parts[-2]
         repo = parts[-1]
         
-        # Fetch repo info from GitHub API
         api_url = f"https://api.github.com/repos/{owner}/{repo}"
         response = requests.get(api_url)
         
