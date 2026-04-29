@@ -1,0 +1,127 @@
+/* frontend/static/css/themes.css - Theme Support */
+
+body.light-theme {
+    background: #ffffff;
+    color: #24292f;
+}
+
+body.light-theme .feature-box {
+    background: #f6f8fa;
+    border-color: #d0d7de;
+}
+
+body.light-theme .url-input {
+    background: #ffffff;
+    border-color: #d0d7de;
+    color: #24292f;
+}
+
+body.light-theme pre {
+    background: #f6f8fa;
+    color: #24292f;
+}
+
+body.dark-theme {
+    background: #0d1117;
+    color: #c9d1d9;
+}
+
+body.dark-theme .feature-box {
+    background: #161b22;
+    border-color: #30363d;
+}
+
+body.dark-theme .url-input {
+    background: #161b22;
+    border-color: #30363d;
+    color: #c9d1d9;
+}
+
+body.dark-theme pre {
+    background: #010409;
+    color: #c9d1d9;
+}
+
+.code-block {
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 15px 0;
+}
+
+.code-header {
+    padding: 10px 15px;
+    background: rgba(0,0,0,0.3);
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+}
+
+.tutorial-step {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 30px;
+    padding: 20px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.05);
+}
+
+.step-number {
+    width: 40px;
+    height: 40px;
+    background: #238636;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 20px;
+}
+
+.step-content {
+    flex: 1;
+}
+
+.theme-monokai pre {
+    background: #272822;
+    color: #f8f8f2;
+}
+
+.theme-vs2015 pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+.theme-eclipse pre {
+    background: #ffffff;
+    color: #000000;
+}
+
+.font-fira-code code {
+    font-family: 'Fira Code', monospace;
+}
+
+.font-source-code-pro code {
+    font-family: 'Source Code Pro', monospace;
+}
+
+.font-jetbrains-mono code {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.font-consolas code {
+    font-family: 'Consolas', monospace;
+}
+
+.template-compact pre {
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.template-fullscreen pre {
+    font-size: 18px;
+    line-height: 1.8;
+}
+
+body {
+    transition: background 0.3s ease, color 0.3s ease;
+}
